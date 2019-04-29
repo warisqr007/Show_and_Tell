@@ -4,7 +4,8 @@ class Config(object):
     def __init__(self):
         # about the model architecture
         self.cnn = 'vgg16'               # 'vgg16' or 'resnet50'
-        self.max_caption_length = 20
+        self.max_caption_length = 8
+        self.max_question_length = 20
         self.dim_embedding = 512
         self.num_lstm_units = 512
         self.num_initalize_layers = 1 ## Changed from 2 to 1    # 1 or 2
