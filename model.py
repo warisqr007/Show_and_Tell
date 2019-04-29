@@ -252,7 +252,79 @@ class CaptionGenerator(BaseModel):
         self.dim_ctx = 512
         self.images = images
         self.conv_feats = reshaped_fc2_feats
+        
+        
+        self.embed_ques_W = tf.Variable(tf.random_uniform([self.vocabulary_size, self.input_embedding_size], -0.08, 0.08), name='embed_ques_W')
 
+        self.lstm_1 = rnn_cell.LSTMCell(rnn_size, input_embedding_size)
+        self.lstm_dropout_1 = rnn_cell.DropoutWrapper(self.lstm_1, output_keep_prob = 1 - self.drop_out_rate)
+        self.lstm_2 = rnn_cell.LSTMCell(rnn_size, rnn_size)
+        self.lstm_dropout_2 = rnn_cell.DropoutWrapper(self.lstm_2, output_keep_prob = 1 - self.drop_out_rate)
+        self.stacked_lstm = rnn_cell.MultiRNNCell([self.lstm_dropout_1, self.lstm_dropout_2])
+        #print(self.stacked_lstm.state_size)
+        self.embed_state_W = tf.Variable(tf.random_uniform([2*rnn_size*rnn_layer, self.dim_hidden], -0.08,0.08),name='embed_state_W')
+        self.embed_state_b = tf.Variable(tf.random_uniform([self.dim_hidden], -0.08, 0.08), name='embed_state_b')
+        self.embed_image_W = tf.Variable(tf.random_uniform([256, self.dim_hidden], -0.08, 0.08), name='embed_image_W')
+        self.embed_image_b = tf.Variable(tf.random_uniform([dim_hidden], -0.08, 0.08), name='embed_image_b')
+        self.embed_scor_W = tf.Variable(tf.random_uniform([dim_hidden, num_output], -0.08, 0.08), name='embed_scor_W')
+        self.embed_scor_b = tf.Variable(tf.random_uniform([num_output], -0.08, 0.08), name='embed_scor_b')
+        
+        if self.is_train:
+            #contexts = self.conv_feats
+            question = tf.placeholder(
+                dtype = tf.int32,
+                shape = [config.batch_size, config.max_question_length])
+      
+        loss = 0.0
+        state = self.stacked_lstm.zero_state(config.batch_size, tf.float32)
+        #print(self.max_words_q)
+        with tf.variable_scope("embed"):
+          for i in range(max_words_q):
+              if i==0:
+                  ques_emb_linear = tf.zeros([config.batch_size, config.dim_embedding])
+              else:
+                  tf.get_variable_scope().reuse_variables()
+                  ques_emb_linear = tf.nn.embedding_lookup(self.embed_ques_W, question[:,i-1])
+
+              ques_emb_drop = tf.nn.dropout(ques_emb_linear, 1-self.drop_out_rate)
+              ques_emb = tf.tanh(ques_emb_drop)
+              output, state = self.stacked_lstm(ques_emb, state)
+
+        image_feat= self.conv_feats
+        #print('resnet')
+        #print(image_feat)
+        question_emb = tf.reshape(tf.transpose(state, [2, 1, 0, 3]), [config.batch_size, -1])
+        #print('question feat')
+        #print(question_emb)
+        #image1=tf.expand_dims(tf.squeeze(image,1),3)
+        #image_feat=network(image,is_training=True)
+
+        #img=tf.layers.dense(pooli,units=6400)
+        #print(pooli)
+        #print(img)
+
+        image_emb = tf.reshape(image_feat, [-1, 256]) # (b x m) x d
+        image_emb = tf.nn.xw_plus_b(image_emb, self.embed_image_W, self.embed_image_b)
+        image_emb = tf.tanh(image_emb)
+        #print('image emb:')
+        #print(image_emb)
+        with tf.variable_scope("att1",reuse=tf.AUTO_REUSE):
+        prob_att1, comb_emb = attention(question_emb, image_emb)
+        with tf.variable_scope("att2",reuse=tf.AUTO_REUSE):
+        prob_att2, comb_emb = attention(comb_emb, image_emb)
+
+        comb_emb = tf.nn.dropout(comb_emb, 1 - self.drop_out_rate)
+        scores_emb = tf.nn.xw_plus_b(comb_emb, self.embed_scor_W, self.embed_scor_b) 
+        #fin=tf.layers.dense(logit, 44, activation=tf.nn.relu, name='pred')
+        #generated_ANS = tf.nn.softmax(scores_emb)
+        #print(generated_ANS)
+        
+        reshaped_comb_feats = tf.reshape(scores_emb,
+                                            [config.batch_size, 8, 512])
+        
+        self.conv_feats = reshaped_comb_feats
+        
+        
 
     def build_rnn(self):
         """ Build the RNN. """
